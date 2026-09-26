@@ -5,5 +5,6 @@ edition = "2024"
 description = "A modern and fast git web frontend in Rust."
 
 [dependencies]
+gix = { version = "0.87.1", default-features = false, features = ["blob-diff", "parallel", "revision", "sha1"] }
 serde = { version = "1", features = ["derive"] }
 toml = "1.1.6"
