@@ -5,3 +5,5 @@ edition = "2024"
 description = "A modern and fast git web frontend in Rust."
 
 [dependencies]
+serde = { version = "1", features = ["derive"] }
+toml = "1.1.6"
