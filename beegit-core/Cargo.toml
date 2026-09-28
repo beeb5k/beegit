@@ -1,0 +1,10 @@
+[package]
+name = "beegit-core"
+version.workspace = true
+edition.workspace = true
+description.workspace = true
+
+[dependencies]
+gix = { version = "0.87.1", default-features = false, features = ["blob-diff", "parallel", "revision", "sha1"] }
+serde.workspace = true
+toml = "1.1.6"
