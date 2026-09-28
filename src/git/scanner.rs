@@ -68,7 +68,7 @@ fn scan_dir(dir_path: &Path, scan: &ScanConfig, repos: &mut Vec<Repo>) {
 
         let entry_path = entry.path();
 
-        if entry_path.is_dir() {
+        if entry_path.is_dir() && !entry_path.is_symlink() {
             scan_dir(&entry_path, scan, repos);
         }
     }
