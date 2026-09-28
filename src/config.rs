@@ -40,7 +40,15 @@ impl Config {
     /// Parsing errors are considered fatal and terminate the process after
     /// printing the error to stderr.
     pub fn load() -> Self {
-        Self::load_from_file(CONFIG_PATH).unwrap_or_default()
+        match Self::load_from_file(CONFIG_PATH) {
+            Ok(config) => config,
+            Err(e) => {
+                eprintln!(
+                    "\x1b[33mWarning: could not read config at {CONFIG_PATH} ({e}), using defaults\x1b[0m"
+                );
+                Self::default()
+            }
+        }
     }
 
     /// Loads and parses a configuration from the specified file.
@@ -57,7 +65,11 @@ impl Config {
             std::process::exit(1);
         });
 
-        config.scan.scan_path = fs::canonicalize(&config.scan.scan_path)?
+        config.scan.scan_path = fs::canonicalize(&config.scan.scan_path)
+            .unwrap_or_else(|e| {
+                eprintln!("\x1b[31mInvalid scan_path: {e}\x1b[0m");
+                std::process::exit(1);
+            })
             .to_string_lossy()
             .into_owned();
 
