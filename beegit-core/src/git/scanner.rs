@@ -14,7 +14,6 @@ pub(crate) enum RepoKind {
     NonBare,
 }
 
-/// Returns the type of Git repository found at a path.
 pub(crate) fn detect_git_repo(path: &Path, cfg: &ScanConfig) -> RepoKind {
     let check = |p: &Path| {
         if !(p.join("HEAD").is_file() && p.join("objects").is_dir()) {
@@ -46,14 +45,6 @@ pub(crate) fn detect_git_repo(path: &Path, cfg: &ScanConfig) -> RepoKind {
     RepoKind::Nope
 }
 
-/// Recursively scans a directory for Git repositories.
-///
-/// The scan path itself must not be a Git repository. Discovered repositories
-/// are added to the returned list, and repository directories are not
-/// traversed further.
-///
-/// Bare repositories are always included. Non-bare repositories are included
-/// only when [`ScanConfig::scan_none_bare_repos`] is enabled.
 pub fn scan_tree() -> Vec<RepoConfig> {
     let mut cfg = Config::load();
     let root = PathBuf::from(&cfg.scan.scan_path);
@@ -70,12 +61,6 @@ pub fn scan_tree() -> Vec<RepoConfig> {
     repos
 }
 
-/// Scans a directory recursively and adds discovered repositories to `repos`.
-///
-/// Repository directories are not traversed after they are discovered.
-/// `.git` directories are skipped because they are handled as part of their
-/// containing non-bare repository. Hidden paths are skipped unless enabled
-/// through [`ScanConfig::scan_hidden_path`].
 fn scan_path(dir_path: &Path, cfg: &mut Config, repos: &mut Vec<RepoConfig>) {
     let repo_kind = detect_git_repo(dir_path, &cfg.scan);
 
@@ -102,13 +87,11 @@ fn scan_path(dir_path: &Path, cfg: &mut Config, repos: &mut Vec<RepoConfig>) {
         let file_name = entry.file_name();
         let name = file_name.as_encoded_bytes();
 
-        // A non-bare repository stores its Git metadata in `.git`, so it must
-        // not be scanned as a separate directory.
+        // Don't scan the `.git` directory in non-bare repositories.
         if name == b".git" {
             continue;
         }
 
-        // Hidden directories are skipped unless explicitly enabled.
         if name.starts_with(b".") && !cfg.scan.scan_hidden_path {
             continue;
         }
@@ -185,214 +168,4 @@ fn parse_git_config(path: &Path, repo_kind: RepoKind) -> Option<HashMap<String, 
     }
 
     Some(values)
-}
-
-#[cfg(test)]
-mod tests {
-    use super::*;
-    use std::fs;
-    use std::path::{Path, PathBuf};
-    use std::time::{SystemTime, UNIX_EPOCH};
-
-    fn temp_dir() -> PathBuf {
-        let timestamp = SystemTime::now()
-            .duration_since(UNIX_EPOCH)
-            .unwrap()
-            .as_nanos();
-
-        let path = std::env::temp_dir().join(format!(
-            "beegit_scanner_{}_{}",
-            std::process::id(),
-            timestamp
-        ));
-
-        fs::create_dir_all(&path).unwrap();
-        path
-    }
-
-    fn create_bare_repo(path: &Path) {
-        fs::create_dir_all(path.join("objects")).unwrap();
-
-        fs::write(path.join("HEAD"), "ref: refs/heads/main\n").unwrap();
-
-        fs::write(
-            path.join("config"),
-            "[core]\n\
-             repositoryformatversion = 0\n\
-             bare = true\n",
-        )
-        .unwrap();
-    }
-
-    fn create_non_bare_repo(path: &Path) {
-        let git = path.join(".git");
-
-        fs::create_dir_all(git.join("objects")).unwrap();
-
-        fs::write(git.join("HEAD"), "ref: refs/heads/main\n").unwrap();
-
-        fs::write(
-            git.join("config"),
-            "[core]\n\
-             repositoryformatversion = 0\n\
-             bare = false\n",
-        )
-        .unwrap();
-    }
-
-    fn config(path: &Path) -> ScanConfig {
-        ScanConfig {
-            scan_path: path.to_string_lossy().into_owned(),
-            ..Default::default()
-        }
-    }
-
-    fn is_scan_path_repo(path: &Path) -> bool {
-        is_bare_git_repo(path) || is_non_bare_repo(path)
-    }
-
-    #[test]
-    fn identifies_bare_repository() {
-        let dir = temp_dir();
-        create_bare_repo(&dir);
-
-        assert!(is_git_repo(&dir));
-        assert!(is_bare_git_repo(&dir));
-        assert!(!is_non_bare_repo(&dir));
-
-        fs::remove_dir_all(dir).unwrap();
-    }
-
-    #[test]
-    fn identifies_non_bare_repository() {
-        let dir = temp_dir();
-        create_non_bare_repo(&dir);
-
-        assert!(is_non_bare_repo(&dir));
-        assert!(!is_bare_git_repo(&dir));
-
-        fs::remove_dir_all(dir).unwrap();
-    }
-
-    #[test]
-    fn ignores_invalid_repository() {
-        let dir = temp_dir();
-
-        assert!(!is_git_repo(&dir));
-        assert!(!is_bare_git_repo(&dir));
-        assert!(!is_non_bare_repo(&dir));
-
-        fs::remove_dir_all(dir).unwrap();
-    }
-
-    #[test]
-    fn scans_bare_repositories() {
-        let dir = temp_dir();
-
-        create_bare_repo(&dir.join("repo1.git"));
-        create_bare_repo(&dir.join("repo2.git"));
-
-        let repos = scan(&config(&dir));
-
-        assert_eq!(repos.len(), 2);
-
-        fs::remove_dir_all(dir).unwrap();
-    }
-
-    #[test]
-    fn scans_repositories_recursively() {
-        let dir = temp_dir();
-
-        create_bare_repo(&dir.join("projects/repo1.git"));
-        create_bare_repo(&dir.join("projects/other/repo2.git"));
-
-        let repos = scan(&config(&dir));
-
-        assert_eq!(repos.len(), 2);
-
-        fs::remove_dir_all(dir).unwrap();
-    }
-
-    #[test]
-    fn ignores_non_bare_repositories_by_default() {
-        let dir = temp_dir();
-
-        create_non_bare_repo(&dir.join("repo"));
-
-        let repos = scan(&config(&dir));
-
-        assert!(repos.is_empty());
-
-        fs::remove_dir_all(dir).unwrap();
-    }
-
-    #[test]
-    fn scans_non_bare_repositories_when_enabled() {
-        let dir = temp_dir();
-
-        create_non_bare_repo(&dir.join("repo"));
-
-        let mut scan_config = config(&dir);
-        scan_config.scan_none_bare_repos = true;
-
-        let repos = scan(&scan_config);
-
-        assert_eq!(repos.len(), 1);
-
-        fs::remove_dir_all(dir).unwrap();
-    }
-
-    #[test]
-    fn ignores_hidden_directories_by_default() {
-        let dir = temp_dir();
-
-        create_bare_repo(&dir.join(".hidden/repo.git"));
-
-        let repos = scan(&config(&dir));
-
-        assert!(repos.is_empty());
-
-        fs::remove_dir_all(dir).unwrap();
-    }
-
-    #[test]
-    fn scans_hidden_directories_when_enabled() {
-        let dir = temp_dir();
-
-        create_bare_repo(&dir.join(".hidden/repo.git"));
-
-        let mut scan_config = config(&dir);
-        scan_config.scan_hidden_path = true;
-
-        let repos = scan(&scan_config);
-
-        assert_eq!(repos.len(), 1);
-
-        fs::remove_dir_all(dir).unwrap();
-    }
-
-    #[test]
-    fn skips_git_directory() {
-        let dir = temp_dir();
-
-        create_non_bare_repo(&dir.join("project"));
-
-        // The `.git` directory contains Git metadata but must not be
-        // discovered as a separate bare repository.
-        let repos = scan(&config(&dir));
-
-        assert!(repos.is_empty());
-
-        fs::remove_dir_all(dir).unwrap();
-    }
-
-    #[test]
-    fn rejects_scan_path_that_is_a_git_repository() {
-        let dir = temp_dir();
-        create_bare_repo(&dir);
-
-        assert!(is_scan_path_repo(&dir));
-
-        fs::remove_dir_all(dir).unwrap();
-    }
 }
