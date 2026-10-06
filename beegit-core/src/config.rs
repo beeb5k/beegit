@@ -88,7 +88,7 @@ impl Default for ServerConfig {
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
-#[serde(default)]
+#[serde(default, deny_unknown_fields)]
 pub struct RepoConfig {
     pub name: Option<String>,
     pub path: Option<PathBuf>,

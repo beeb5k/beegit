@@ -3,10 +3,7 @@ use std::{
     path::{Path, PathBuf},
 };
 
-use crate::{
-    config::{Config, RepoConfig, ScanConfig},
-    git::repo::Repo,
-};
+use crate::config::{Config, RepoConfig, ScanConfig};
 
 pub(crate) enum RepoKind {
     Nope,
@@ -134,7 +131,7 @@ fn add_git_repo(path: &Path, repo_kind: RepoKind, cfg: &mut Config) -> Option<Re
             .map(|s| s.trim().to_string())
             .unwrap_or_else(|_| "Unnamed repository".into());
 
-        repo_config.name = Some(description);
+        repo_config.description = Some(description);
     }
 
     if repo_config.path.is_none() {
@@ -142,10 +139,16 @@ fn add_git_repo(path: &Path, repo_kind: RepoKind, cfg: &mut Config) -> Option<Re
     }
 
     if repo_config.category.is_none() {
-        repo_config.category = Some(path.to_path_buf());
+        let cat = path
+            .strip_prefix(&cfg.scan.scan_path)
+            .ok()?
+            .parent()
+            .map(|p| p.to_string_lossy().into_owned())
+            .filter(|p| !p.is_empty());
+        repo_config.category = cat;
     }
 
-    todo!()
+    Some(repo_config)
 }
 
 fn parse_git_config(path: &Path, repo_kind: RepoKind) -> Option<HashMap<String, String>> {
