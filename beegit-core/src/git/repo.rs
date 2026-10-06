@@ -2,6 +2,8 @@ use std::fs;
 use std::path::{Path, PathBuf};
 use std::time::{SystemTime, UNIX_EPOCH};
 
+use gix::utils::AsBStr;
+
 /// Information about a Git repository.
 #[derive(Debug, Clone)]
 pub struct Repo {
@@ -13,9 +15,6 @@ pub struct Repo {
 
     /// Repository description read from Git's `description` file.
     pub description: String,
-
-    /// Unix timestamp of the repository's latest commit.
-    last_commit_time: Option<i64>,
 }
 
 impl Repo {
@@ -43,13 +42,10 @@ impl Repo {
             .map(|s| s.trim().to_string())
             .unwrap_or_else(|_| "Unnamed repository".into());
 
-        let last_commit_time = Self::last_commit_time(&path);
-
         Some(Self {
             name,
             path,
             description,
-            last_commit_time,
         })
     }
 
@@ -59,7 +55,7 @@ impl Repo {
     /// current time and formatted as seconds, minutes, hours, days, weeks,
     /// months, or years.
     pub fn idle(&self) -> Option<String> {
-        let commit_time = self.last_commit_time?;
+        let commit_time = self.last_commit_time?.seconds + self.last_commit_time?.offset as i64;
 
         let now = SystemTime::now().duration_since(UNIX_EPOCH).ok()?.as_secs() as i64;
 
@@ -87,12 +83,39 @@ impl Repo {
     }
 
     /// Returns the committer timestamp of the commit currently pointed to by `HEAD`.
-    fn last_commit_time(path: &Path) -> Option<i64> {
+    pub fn last_commit_time(path: &Path) -> Option<gix::date::Time> {
         let repo = gix::ThreadSafeRepository::open(path).ok()?;
         let repo = repo.to_thread_local();
         let commit = repo.head().ok()?.peel_to_commit().ok()?;
 
-        Some(commit.time().ok()?.seconds)
+        commit.time().ok()
+    }
+
+    pub fn read_readme(path: &Path) -> Option<String> {
+        let repo = gix::ThreadSafeRepository::open(path).ok()?;
+        let repo = repo.to_thread_local();
+        let tree = repo.head().ok()?.peel_to_commit().ok()?.tree().ok()?;
+
+        let candidates = [
+            "README.md",
+            "README",
+            "README.txt",
+            "README.markdown",
+            "README.rst",
+        ];
+
+        for name in candidates {
+            let Some(entry) = tree.find_entry(name) else {
+                continue;
+            };
+
+            let object = entry.object().ok()?;
+            let bytes = object.data.as_bstr();
+
+            return Some(bytes.to_string());
+        }
+
+        None
     }
 }
 

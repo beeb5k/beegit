@@ -5,3 +5,4 @@ edition.workspace = true
 description.workspace = true
 
 [dependencies]
+beegit-core = { path = "../beegit-core" }

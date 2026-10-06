@@ -1,26 +1,14 @@
 use serde::{Deserialize, Serialize};
+use std::collections::HashMap;
 use std::fs;
-use std::path::Path;
+use std::path::{Path, PathBuf};
 
-/// Path to the configuration file.
-///
-/// During development, the configuration is loaded from the project's
-/// `example-config.toml`. In release builds, BeeGit uses the system-wide
-/// configuration at `/etc/beegit.toml`.
 pub const CONFIG_PATH: &str = if cfg!(debug_assertions) {
     "example-config.toml"
 } else {
     "/etc/beegit.toml"
 };
 
-/// Root configuration for BeeGit.
-///
-/// The configuration is divided into two sections:
-///
-/// - [`ScanConfig`] controls how BeeGit discovers and names repositories.
-/// - [`ServerConfig`] controls the address and port of the HTTP server.
-///
-/// Missing fields are filled with their corresponding [`Default`] values.
 #[derive(Debug, Clone, Serialize, Deserialize, Default)]
 #[serde(default)]
 pub struct Config {
@@ -29,6 +17,9 @@ pub struct Config {
 
     /// HTTP server configuration.
     pub server: ServerConfig,
+
+    /// Repository-specific configuration.
+    pub repo: HashMap<String, RepoConfig>,
 }
 
 impl Config {
@@ -39,7 +30,7 @@ impl Config {
     ///
     /// Parsing errors are considered fatal and terminate the process after
     /// printing the error to stderr.
-    pub fn load() -> Self {
+    pub(crate) fn load() -> Self {
         match Self::load_from_file(CONFIG_PATH) {
             Ok(config) => config,
             Err(e) => {
@@ -56,7 +47,7 @@ impl Config {
     /// The configuration path is canonicalized before the file is read.
     /// The repository scan path is also canonicalized after deserialization
     /// so that the rest of the application receives an absolute path.
-    pub fn load_from_file<P: AsRef<Path>>(path: P) -> Result<Self, std::io::Error> {
+    fn load_from_file<P: AsRef<Path>>(path: P) -> Result<Self, std::io::Error> {
         let absolute_path = std::fs::canonicalize(path)?;
         let content = fs::read_to_string(absolute_path)?;
 
@@ -137,6 +128,42 @@ impl Default for ServerConfig {
         Self {
             host: [127, 0, 0, 1],
             port: 8000,
+        }
+    }
+}
+
+/// Configuration and metadata for a Git repository.
+#[derive(Debug, Clone, Serialize, Deserialize)]
+#[serde(default)]
+pub struct RepoConfig {
+    /// Display name of the repository.
+    pub name: Option<String>,
+
+    /// Filesystem path to the repository.
+    pub path: Option<PathBuf>,
+
+    /// Repository description read from Git's `description` file.
+    pub description: Option<String>,
+
+    /// Category used to group the repository in the web interface.
+    pub category: Option<String>,
+
+    /// Owner of the repository.
+    pub owner: Option<String>,
+
+    /// Branch displayed as the repository's default branch.
+    pub default_branch: Option<String>,
+}
+
+impl Default for RepoConfig {
+    fn default() -> Self {
+        Self {
+            name: None,
+            path: None,
+            description: None,
+            owner: None,
+            category: None,
+            default_branch: None,
         }
     }
 }

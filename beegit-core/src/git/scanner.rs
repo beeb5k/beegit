@@ -1,45 +1,92 @@
-use crate::config::ScanConfig;
-use crate::git::repo::Repo;
-use std::path::Path;
+use std::{
+    collections::HashMap,
+    path::{Path, PathBuf},
+};
+
+use crate::{
+    config::{Config, RepoConfig, ScanConfig},
+    git::repo::Repo,
+};
+
+pub(crate) enum RepoKind {
+    Nope,
+    Bare,
+    NonBare,
+}
+
+/// Returns the type of Git repository found at a path.
+pub(crate) fn detect_git_repo(path: &Path, cfg: &ScanConfig) -> RepoKind {
+    let check = |p: &Path| {
+        if !(p.join("HEAD").is_file() && p.join("objects").is_dir()) {
+            return RepoKind::Nope;
+        }
+
+        let is_bare = match std::fs::read_to_string(p.join("config")) {
+            Ok(config) => config.contains("bare = true"),
+            Err(_) => false,
+        };
+
+        if is_bare {
+            RepoKind::Bare
+        } else {
+            RepoKind::NonBare
+        }
+    };
+
+    let result = check(path);
+
+    if !matches!(result, RepoKind::Nope) {
+        return result;
+    }
+
+    if cfg.scan_none_bare_repos {
+        return check(&path.join(".git"));
+    }
+
+    RepoKind::Nope
+}
 
 /// Recursively scans a directory for Git repositories.
 ///
-/// The scan starts at [`ScanConfig::scan_path`] and walks through its
-/// subdirectories. Bare repositories are always included, while non-bare
-/// repositories can be included with [`ScanConfig::scan_none_bare_repos`].
-/// Hidden directories are skipped unless [`ScanConfig::scan_hidden_path`]
-/// is enabled.
+/// The scan path itself must not be a Git repository. Discovered repositories
+/// are added to the returned list, and repository directories are not
+/// traversed further.
 ///
-/// The scan stops descending into a directory once it has been identified
-/// as a repository.
-pub fn scan(scan: &ScanConfig) -> Vec<Repo> {
-    let root = Path::new(&scan.scan_path);
+/// Bare repositories are always included. Non-bare repositories are included
+/// only when [`ScanConfig::scan_none_bare_repos`] is enabled.
+pub fn scan_tree() -> Vec<RepoConfig> {
+    let mut cfg = Config::load();
+    let root = PathBuf::from(&cfg.scan.scan_path);
 
-    // Exit if the scan path is a repository.
-    if is_bare_git_repo(root) || is_non_bare_repo(root) {
+    if !matches!(detect_git_repo(&root, &cfg.scan), RepoKind::Nope) {
         eprintln!("\x1b[31mError: scan path cannot be a Git repository.\x1b[0m");
         std::process::exit(1);
     }
 
     let mut repos = Vec::new();
 
-    scan_dir(root, scan, &mut repos);
+    scan_path(&root, &mut cfg, &mut repos);
 
     repos
 }
 
-/// Recursively walks a directory and adds discovered repositories to `repos`.
+/// Scans a directory recursively and adds discovered repositories to `repos`.
 ///
-/// Repository directories are not traversed further. `.git` directories and
-/// hidden paths are skipped according to the scan configuration.
-fn scan_dir(dir_path: &Path, scan: &ScanConfig, repos: &mut Vec<Repo>) {
-    let is_repo =
-        is_bare_git_repo(dir_path) || (scan.scan_none_bare_repos && is_non_bare_repo(dir_path));
+/// Repository directories are not traversed after they are discovered.
+/// `.git` directories are skipped because they are handled as part of their
+/// containing non-bare repository. Hidden paths are skipped unless enabled
+/// through [`ScanConfig::scan_hidden_path`].
+fn scan_path(dir_path: &Path, cfg: &mut Config, repos: &mut Vec<RepoConfig>) {
+    let repo_kind = detect_git_repo(dir_path, &cfg.scan);
+
+    let is_repo = match repo_kind {
+        RepoKind::Bare => true,
+        RepoKind::NonBare => cfg.scan.scan_none_bare_repos,
+        RepoKind::Nope => false,
+    };
 
     if is_repo {
-        if let Some(repo) =
-            Repo::read_metadata_from_path(dir_path.to_path_buf(), scan.strip_repo_suffix)
-        {
+        if let Some(repo) = add_git_repo(dir_path, repo_kind, cfg) {
             repos.push(repo);
         }
 
@@ -55,64 +102,89 @@ fn scan_dir(dir_path: &Path, scan: &ScanConfig, repos: &mut Vec<Repo>) {
         let file_name = entry.file_name();
         let name = file_name.as_encoded_bytes();
 
-        // A non-bare repository stores its Git data in `.git`, so it must
-        // not be treated as a separate directory during the scan.
+        // A non-bare repository stores its Git metadata in `.git`, so it must
+        // not be scanned as a separate directory.
         if name == b".git" {
             continue;
         }
 
-        // Hidden directories are only scanned when explicitly enabled.
-        if name.starts_with(b".") && !scan.scan_hidden_path {
+        // Hidden directories are skipped unless explicitly enabled.
+        if name.starts_with(b".") && !cfg.scan.scan_hidden_path {
             continue;
         }
 
         let entry_path = entry.path();
 
         if entry_path.is_dir() && !entry_path.is_symlink() {
-            scan_dir(&entry_path, scan, repos);
+            scan_path(&entry_path, cfg, repos);
         }
     }
 }
 
-/// Checks whether a path contains the basic structure of a Git repository.
-///
-/// This only verifies the presence of `HEAD` and the `objects` directory.
-/// The repository type is determined separately.
-fn is_git_repo(path: &Path) -> bool {
-    path.join("HEAD").is_file() && path.join("objects").is_dir()
+fn add_git_repo(path: &Path, repo_kind: RepoKind, cfg: &mut Config) -> Option<RepoConfig> {
+    let git_dir = match repo_kind {
+        RepoKind::NonBare => path.join(".git/"),
+        _ => path.to_path_buf(),
+    };
+
+    let repo_name = path.file_name()?.to_string_lossy();
+
+    let repo_name = match cfg.scan.strip_repo_suffix {
+        true => repo_name.strip_suffix(".git").unwrap_or(&repo_name),
+        false => &repo_name,
+    };
+
+    let mut repo_config = cfg
+        .repo
+        .remove(repo_name)
+        .or_else(|| cfg.repo.remove(&format!("{repo_name}.git")))
+        .unwrap_or_default();
+
+    if repo_config.name.is_none() {
+        repo_config.name = Some(repo_name.to_string());
+    }
+
+    if repo_config.description.is_none() {
+        let desc_path = git_dir.join("description");
+
+        let description = std::fs::read_to_string(desc_path)
+            .map(|s| s.trim().to_string())
+            .unwrap_or_else(|_| "Unnamed repository".into());
+
+        repo_config.name = Some(description);
+    }
+
+    if repo_config.path.is_none() {
+        repo_config.path = Some(path.to_path_buf());
+    }
+
+    if repo_config.category.is_none() {
+        repo_config.category = Some(path.to_path_buf());
+    }
+
+    todo!()
 }
 
-/// Checks whether a path contains a non-bare Git repository.
-///
-/// Non-bare repositories keep their Git data in a `.git` directory. The
-/// repository configuration is checked to distinguish them from ordinary
-/// directories containing Git-related files.
-fn is_non_bare_repo(path: &Path) -> bool {
-    let git_dir = path.join(".git");
+fn parse_git_config(path: &Path, repo_kind: RepoKind) -> Option<HashMap<String, String>> {
+    let config_path = match repo_kind {
+        RepoKind::Bare => path.join("config"),
+        RepoKind::NonBare => path.join(".git/config"),
+        RepoKind::Nope => return None,
+    };
 
-    if !is_git_repo(&git_dir) {
-        return false;
+    let config = std::fs::read_to_string(config_path).ok()?;
+
+    let mut values = HashMap::new();
+
+    for line in config.lines() {
+        let Some((key, value)) = line.split_once('=') else {
+            continue;
+        };
+
+        values.insert(key.trim().to_owned(), value.trim().to_owned());
     }
 
-    match std::fs::read_to_string(git_dir.join("config")) {
-        Ok(config) => config.contains("bare = false"),
-        Err(_) => false,
-    }
-}
-
-/// Checks whether a path is a bare Git repository.
-///
-/// Bare repositories keep their Git data directly in the repository root
-/// instead of using a `.git` directory.
-fn is_bare_git_repo(path: &Path) -> bool {
-    if !is_git_repo(path) {
-        return false;
-    }
-
-    match std::fs::read_to_string(path.join("config")) {
-        Ok(config) => config.contains("bare = true"),
-        Err(_) => false,
-    }
+    Some(values)
 }
 
 #[cfg(test)]

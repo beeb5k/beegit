@@ -1,2 +1,13 @@
-scan_path = "eaf"
-[Scan]
+[scan]
+scan_path = "/home/beeb5k/testfbeegit/"
+scan_none_bare_repos = true
+
+[repo]
+owner = "beeb5k"
+
+[repo.foo]
+name = "beegit"
+owner = "beeb5k"
+path = "/home/beeb5k/cgit"
+catogery = "random"
+description = "fast git frontend"
