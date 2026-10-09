@@ -1,13 +1,11 @@
 [scan]
-scan_path = "/home/beeb5k/testfbeegit/"
+scan_path = "/home/bee/testfbeegit/"
 scan_none_bare_repos = true
 
-[repo]
-owner = "beeb5k"
-
-[repo.foo]
+[repo.luli]
 name = "beegit"
 owner = "beeb5k"
-path = "/home/beeb5k/cgit"
-catogery = "random"
+# path = "/home/bee/testfbeegit/luli"
+category = "random"
 description = "fast git frontend"
+aefea = "aef"
