@@ -87,7 +87,7 @@ impl Default for ServerConfig {
     }
 }
 
-#[derive(Debug, Clone, Serialize, Deserialize)]
+#[derive(Debug, Clone, Serialize, Deserialize, Default)]
 #[serde(default, deny_unknown_fields)]
 pub struct RepoConfig {
     pub name: Option<String>,
@@ -96,17 +96,4 @@ pub struct RepoConfig {
     pub category: Option<String>,
     pub owner: Option<String>,
     pub default_branch: Option<String>,
-}
-
-impl Default for RepoConfig {
-    fn default() -> Self {
-        Self {
-            name: None,
-            path: None,
-            description: None,
-            owner: None,
-            category: None,
-            default_branch: None,
-        }
-    }
 }
